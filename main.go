@@ -8,13 +8,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"os"
-
-	"strconv"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/boltdb/bolt"

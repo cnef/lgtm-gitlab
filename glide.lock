@@ -1,8 +1,0 @@
-hash: adf6813af5301ae2b209e998fb02e3839509ddeeda308aa2c5ed6f9db3978447
-updated: 2017-06-16T21:15:23.155265019+08:00
-imports:
-- name: github.com/boltdb/bolt
-  version: 583e8937c61f1af6513608ccc75c97b6abdf4ff9
-- name: github.com/Sirupsen/logrus
-  version: 202f25545ea4cf9b191ff7f846df5d87c9382c2b
-testImports: []
