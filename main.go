@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -12,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/Sirupsen/logrus"
 	"github.com/boltdb/bolt"
@@ -52,9 +50,10 @@ var (
 )
 
 var (
-	mutex sync.RWMutex
-	// map[merge_request_id][count]
-	lgtmCount = make(map[int]int)
+	// projects/<id>/merge_requests/<id>
+	mergeRequests = make(map[string]*MergeRequest)
+	mutex         sync.RWMutex
+	mergeMutex    sync.RWMutex
 
 	glURL *url.URL
 )
@@ -153,22 +152,31 @@ func LGTMHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func checkLgtm(comment Comment) error {
+
+	bytes, _ := json.Marshal(comment)
+	content := string(bytes)
+	logrus.WithField("comment", content).Infoln("checkLgtm")
+
 	if comment.ObjectKind != ObjectNote {
-		// unmatched, do nothing
+		logrus.Infoln("comment.ObjectKind != ObjectNote")
 		return nil
 	}
 
 	if comment.ObjectAttributes.NoteableType != NoteableTypeMergeRequest {
-		// unmatched, do nothing
+		logrus.Infoln("comment.ObjectAttributes.NoteableType != NoteableTypeMergeRequest")
 		return nil
 	}
 
-	if strings.ToUpper(comment.ObjectAttributes.Note) != *lgtmNote {
-		// unmatched, do nothing
+	if err := checkLGTMAuthor(comment); err != nil {
+		logrus.Infoln("check reviewer failed:", err.Error())
 		return nil
 	}
 
-	// TODO: 检查评论LGTM的两个人 是不同的人
+	if strings.ToLower(comment.ObjectAttributes.Note) != strings.ToLower(*lgtmNote) {
+		logrus.Infoln("comment.ObjectAttributes.Note != ", *lgtmNote)
+		return nil
+	}
+
 	var (
 		canbeMerged bool
 		err         error
@@ -194,7 +202,6 @@ func checkLgtm(comment Comment) error {
 			"canbeMerged": canbeMerged,
 			"MergeStatus": comment.MergeRequest.MergeStatus,
 		}).Info("The MR can not be merged.")
-
 	}
 
 	return nil
@@ -241,177 +248,32 @@ func checkLGTMCount(comment Comment) (bool, error) {
 	return checkStatus, nil
 }
 
-func acceptMergeRequest(projectID int, mergeRequestID int, shouldRemoveSourceBranch string) {
-	params := map[string]string{
-		"should_remove_source_branch": shouldRemoveSourceBranch,
-	}
-	bodyBytes, err := json.Marshal(params)
-	if err != nil {
-		logrus.WithError(err).Errorln("json marshal failed")
-		return
+func checkLGTMAuthor(comment Comment) error {
+
+	var (
+		mergeRequest *MergeRequest
+		ok           bool
+		err          error
+	)
+	mergeRequestURI := fmt.Sprintf("projects/%d/merge_requests/%d", comment.ProjectID, comment.MergeRequest.ID)
+
+	mergeMutex.RLock()
+	mergeRequest, ok = mergeRequests[mergeRequestURI]
+	mergeMutex.RUnlock()
+
+	if !ok {
+		mergeRequest, err = getMergeRequest(comment.ProjectID, comment.MergeRequest.ID)
+		if err != nil {
+			return err
+		}
+		mergeMutex.Lock()
+		mergeRequests[mergeRequestURI] = mergeRequest
+		mergeMutex.Unlock()
 	}
 
-	glURL.Path = fmt.Sprintf("/api/v3/projects/%d/merge_requests/%d/merge", projectID, mergeRequestID)
-	req, err := http.NewRequest("PUT", glURL.String(), bytes.NewReader(bodyBytes))
-	if err != nil {
-		logrus.WithError(err).Errorln("http NewRequest failed")
-		return
-	}
-	req.Header.Set("Conntent-Type", "application/json")
-	// authenticate
-	req.Header.Set("PRIVATE-TOKEN", *privateToken) // my private token
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		logrus.WithError(err).Errorln("execute request failed")
-		return
+	if comment.User.Username != mergeRequest.Author.Username {
+		return nil
 	}
 
-	switch resp.StatusCode {
-	// 200
-	case http.StatusOK:
-		logrus.Info("accept merge request successfully")
-	// 405
-	case http.StatusMethodNotAllowed:
-		logrus.Warnln("it has some conflicts and can not be merged")
-	// 406
-	case http.StatusNotAcceptable:
-		logrus.Warnln("merge request is already merged or closed")
-	default:
-		logrus.WithFields(logrus.Fields{
-			"http_code":   resp.StatusCode,
-			"http_status": resp.Status,
-		}).Errorln("accept merge failed")
-	}
+	return fmt.Errorf("reviewer can't mergeRequest author: %s", mergeRequest.Author.Username)
 }
-
-// Comment represents gitlab comment events
-type Comment struct {
-	ObjectKind string `json:"object_kind"`
-	User       struct {
-		Name      string `json:"name"`
-		Username  string `json:"username"`
-		AvatarURL string `json:"avatar_url"`
-	} `json:"user"`
-	ProjectID int `json:"project_id"`
-	Project   struct {
-		Name              string      `json:"name"`
-		Description       string      `json:"description"`
-		WebURL            string      `json:"web_url"`
-		AvatarURL         interface{} `json:"avatar_url"`
-		GitSSHURL         string      `json:"git_ssh_url"`
-		GitHTTPURL        string      `json:"git_http_url"`
-		Namespace         string      `json:"namespace"`
-		VisibilityLevel   int         `json:"visibility_level"`
-		PathWithNamespace string      `json:"path_with_namespace"`
-		DefaultBranch     string      `json:"default_branch"`
-		Homepage          string      `json:"homepage"`
-		URL               string      `json:"url"`
-		SSHURL            string      `json:"ssh_url"`
-		HTTPURL           string      `json:"http_url"`
-	} `json:"project"`
-	ObjectAttributes struct {
-		ID                   int         `json:"id"`
-		Note                 string      `json:"note"`
-		NoteableType         string      `json:"noteable_type"`
-		AuthorID             int         `json:"author_id"`
-		CreatedAt            string      `json:"created_at"`
-		UpdatedAt            string      `json:"updated_at"`
-		ProjectID            int         `json:"project_id"`
-		Attachment           interface{} `json:"attachment"`
-		LineCode             interface{} `json:"line_code"`
-		CommitID             string      `json:"commit_id"`
-		NoteableID           int         `json:"noteable_id"`
-		StDiff               interface{} `json:"st_diff"`
-		System               bool        `json:"system"`
-		UpdatedByID          interface{} `json:"updated_by_id"`
-		Type                 interface{} `json:"type"`
-		Position             interface{} `json:"position"`
-		OriginalPosition     interface{} `json:"original_position"`
-		ResolvedAt           interface{} `json:"resolved_at"`
-		ResolvedByID         interface{} `json:"resolved_by_id"`
-		DiscussionID         string      `json:"discussion_id"`
-		OriginalDiscussionID interface{} `json:"original_discussion_id"`
-		URL                  string      `json:"url"`
-	} `json:"object_attributes"`
-	Repository struct {
-		Name        string `json:"name"`
-		URL         string `json:"url"`
-		Description string `json:"description"`
-		Homepage    string `json:"homepage"`
-	} `json:"repository"`
-	MergeRequest struct {
-		ID              int         `json:"id"`
-		TargetBranch    string      `json:"target_branch"`
-		SourceBranch    string      `json:"source_branch"`
-		SourceProjectID int         `json:"source_project_id"`
-		AuthorID        int         `json:"author_id"`
-		AssigneeID      int         `json:"assignee_id"`
-		Title           string      `json:"title"`
-		CreatedAt       string      `json:"created_at"`
-		UpdatedAt       string      `json:"updated_at"`
-		MilestoneID     interface{} `json:"milestone_id"`
-		State           string      `json:"state"`
-		MergeStatus     string      `json:"merge_status"`
-		TargetProjectID int         `json:"target_project_id"`
-		Iid             int         `json:"iid"`
-		Description     string      `json:"description"`
-		Position        int         `json:"position"`
-		LockedAt        interface{} `json:"locked_at"`
-		UpdatedByID     interface{} `json:"updated_by_id"`
-		MergeError      interface{} `json:"merge_error"`
-		MergeParams     struct {
-			ForceRemoveSourceBranch string `json:"force_remove_source_branch"`
-		} `json:"merge_params"`
-		MergeWhenBuildSucceeds   bool        `json:"merge_when_build_succeeds"`
-		MergeUserID              interface{} `json:"merge_user_id"`
-		MergeCommitSha           interface{} `json:"merge_commit_sha"`
-		DeletedAt                interface{} `json:"deleted_at"`
-		InProgressMergeCommitSha interface{} `json:"in_progress_merge_commit_sha"`
-		Source                   struct {
-			Name              string `json:"name"`
-			Description       string `json:"description"`
-			WebURL            string `json:"web_url"`
-			AvatarURL         string `json:"avatar_url"`
-			GitSSHURL         string `json:"git_ssh_url"`
-			GitHTTPURL        string `json:"git_http_url"`
-			Namespace         string `json:"namespace"`
-			VisibilityLevel   int    `json:"visibility_level"`
-			PathWithNamespace string `json:"path_with_namespace"`
-			DefaultBranch     string `json:"default_branch"`
-			Homepage          string `json:"homepage"`
-			URL               string `json:"url"`
-			SSHURL            string `json:"ssh_url"`
-			HTTPURL           string `json:"http_url"`
-		} `json:"source"`
-		Target struct {
-			Name              string      `json:"name"`
-			Description       string      `json:"description"`
-			WebURL            string      `json:"web_url"`
-			AvatarURL         interface{} `json:"avatar_url"`
-			GitSSHURL         string      `json:"git_ssh_url"`
-			GitHTTPURL        string      `json:"git_http_url"`
-			Namespace         string      `json:"namespace"`
-			VisibilityLevel   int         `json:"visibility_level"`
-			PathWithNamespace string      `json:"path_with_namespace"`
-			DefaultBranch     string      `json:"default_branch"`
-			Homepage          string      `json:"homepage"`
-			URL               string      `json:"url"`
-			SSHURL            string      `json:"ssh_url"`
-			HTTPURL           string      `json:"http_url"`
-		} `json:"target"`
-		LastCommit struct {
-			ID        string    `json:"id"`
-			Message   string    `json:"message"`
-			Timestamp time.Time `json:"timestamp"`
-			URL       string    `json:"url"`
-			Author    struct {
-				Name  string `json:"name"`
-				Email string `json:"email"`
-			} `json:"author"`
-		} `json:"last_commit"`
-		WorkInProgress bool `json:"work_in_progress"`
-	} `json:"merge_request"`
-}
-
-// 后续支持 redis. HINCR lgtm merge_id 1

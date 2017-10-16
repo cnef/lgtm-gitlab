@@ -17,4 +17,5 @@ dist: dist-clean
 	mkdir -p dist/ && GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -a -tags netgo -installsuffix netgo -o dist/lgtm
 
 release: dist
-	docker build -t zhxcai/lgtm .
+	docker build -t registry.newben.net/library/lgtm .
+	docker push registry.newben.net/library/lgtm
