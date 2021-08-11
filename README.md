@@ -10,24 +10,36 @@ You should create a access token on your gitlab
 
 ## run lgtm-gitlab
 
-### binrary
-```shell
-./lgtm --help
-  -db_path string
-    	bolt db data (default "lgtm.data")
-  -gitlab_url string
-    	e.g. https://your.gitlab.com
-  -lgtm_count int
-    	lgtm user count (default 2)
-  -lgtm_note string
-    	lgtm note (default "LGTM")
-  -log_level string
-    	log level (default "info")
-  -port int
-    	http listen port (default 8989)
-  -token string
-    	gitlab private token which used to accept merge request. can be found in https://your.gitlab.com/profile/account
-```
+### env configurations
+
+- LGTM_DB_PATH string
+
+  bolt db data (default "/var/lib/lgtm/lgtm.data")
+
+- LGTM_GITLAB_URL string
+
+  e.g. https://your.gitlab.com
+      
+- LGTM_COUNT int
+
+  lgtm user count (default 2)
+
+- LGTM_NOTE string
+
+  lgtm note (default "lgtm")
+
+- LGTM_LOG_LEVEL string
+
+  log level (default "info")
+
+- LGTM_PORT int
+
+  http listen port (default 8989)
+
+- LGTM_TOKEN string
+
+  gitlab private token which used to accept merge request. can be found in https://your.gitlab.com/profile/account
+
 
 ### docker
 
@@ -42,4 +54,4 @@ docker run -d --restart=always \
 
 ## comment LGTM on MR
 
-Now you can comment a LGTM on gitlab MR, when the `lgtm_count` achieve, the MR will be merged.
+Now you can comment a LGTM on gitlab MR, when the `LGTM_COUNT` achieve, the MR will be merged.

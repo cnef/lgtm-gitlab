@@ -1,8 +1,10 @@
 package main
 
 import (
-	"net/url"
+	"log"
 	"testing"
+
+	"github.com/xanzy/go-gitlab"
 )
 
 func Test_getMergeRequest(t *testing.T) {
@@ -12,13 +14,17 @@ func Test_getMergeRequest(t *testing.T) {
 	}
 
 	arg := args{
-		projectID:      197,
-		mergeRequestID: 97,
+		projectID:      3,
+		mergeRequestID: 1,
 	}
 
-	glURL, _ = url.Parse("http://git.xxx.cn/")
-	*privateToken = "xxx"
-	got, err := getMergeRequest(arg.projectID, arg.mergeRequestID)
+	git, err := gitlab.NewClient("zXHTLu1azQ1qxQ3xkXmu", gitlab.WithBaseURL("http://192.168.1.11:8000/api/v4"))
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+		return
+	}
+
+	got, _, err := git.MergeRequests.GetMergeRequest(arg.projectID, arg.mergeRequestID, &gitlab.GetMergeRequestsOptions{})
 	if err != nil {
 		t.Errorf("getMergeRequest() error = %v", err)
 		return

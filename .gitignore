@@ -31,3 +31,4 @@ main
 .vagrant
 *.tar.gz
 dist/*
+vendor/
